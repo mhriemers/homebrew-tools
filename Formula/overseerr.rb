@@ -1,8 +1,8 @@
 class Overseerr < Formula
   desc "Request management and media discovery tool for the Plex ecosystem"
   homepage "https://overseerr.dev/"
+  url "https://github.com/sct/overseerr/archive/refs/tags/v1.34.0.tar.gz"
   version "1.34.0"
-  url "https://github.com/sct/overseerr/archive/refs/tags/v#{version}.tar.gz"
   sha256 "c5af2fcd1e7da842b8f0d97f7dbfc2d9461c86bf6bfaac879c8842af359f6102"
   license "MIT"
 
@@ -22,6 +22,7 @@ class Overseerr < Formula
         echo "Overseerr #{version}"
         exit 0
       fi
+      export NODE_ENV="production"
       export CONFIG_DIRECTORY="#{var}/lib/overseerr/config"
       export PORT="5055"
       exec "#{Formula["node@20"].opt_bin}/node" "#{libexec}/dist/index.js" "$@"
