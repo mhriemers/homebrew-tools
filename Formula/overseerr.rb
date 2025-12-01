@@ -12,33 +12,34 @@ class Overseerr < Formula
   def install
     system "yarn", "install", "--frozen-lockfile"
     system "yarn", "build"
+    system "yarn", "install", "--production", "--ignore-scripts", "--prefer-offline"
 
-    libexec.install Dir["*"]
+    rm_rf "src"
+    rm_rf "server"
+    rm_rf ".next/cache"
 
-    # Create wrapper script that supports --version flag
-    (bin/"overseerr").write <<~EOS
-      #!/bin/bash
-      if [ "$1" = "--version" ]; then
-        echo "Overseerr #{version}"
-        exit 0
-      fi
-      export NODE_ENV="production"
-      export CONFIG_DIRECTORY="#{var}/lib/overseerr/config"
-      export PORT="5055"
-      exec "#{Formula["node@20"].opt_bin}/node" "#{libexec}/dist/index.js" "$@"
-    EOS
-    chmod 0755, bin/"overseerr"
+    libexec.install Dir["*"], ".next"
+  end
+
+  def post_install
+    (var/"lib/overseerr/config").mkpath
   end
 
   service do
-    run [opt_bin/"overseerr"]
+    run [Formula["node@20"].opt_bin/"node", libexec/"dist/index.js"]
     keep_alive true
+    working_dir libexec
+    environment_variables \
+      PATH: std_service_path_env,
+      NODE_ENV: "production",
+      PORT: "5055",
+      CONFIG_DIRECTORY: var/"lib/overseerr/config"
+      
     log_path var/"log/overseerr.log"
     error_log_path var/"log/overseerr.log"
   end
 
   test do
-    assert_path_exists bin/"overseerr"
-    assert_match "Overseerr #{version}", shell_output("#{bin}/overseerr --version")
+    assert_path_exists libexec/"dist/index.js"
   end
 end
