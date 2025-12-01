@@ -10,22 +10,25 @@ To tap this repository:
 brew tap mhriemers/tools
 ```
 
-## Formulae
+## Available Formulae
 
-### Flood
+| Formula | Description |
+|---------|-------------|
+| **flood** | Modern web UI for various torrent clients |
+| **overseerr** | Request management and media discovery tool for the Plex ecosystem |
 
-A modern web UI for various torrent clients.
+## Usage
 
-**Installation:**
-
-```bash
-brew install mhriemers/tools/flood
-```
-
-**Service:**
-
-To start the Flood service:
+Install any formula:
 
 ```bash
-brew services start mhriemers/tools/flood
+brew install mhriemers/tools/<formula-name>
 ```
+
+Start a service:
+
+```bash
+brew services start mhriemers/tools/<formula-name>
+```
+
+
