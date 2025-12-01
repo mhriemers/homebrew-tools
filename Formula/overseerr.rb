@@ -1,13 +1,13 @@
 class Overseerr < Formula
   desc "Request management and media discovery tool for the Plex ecosystem"
   homepage "https://overseerr.dev/"
-  version "1.34.0"
   url "https://github.com/sct/overseerr/archive/refs/tags/v#{version}.tar.gz"
+  version "1.34.0"
   sha256 "c5af2fcd1e7da842b8f0d97f7dbfc2d9461c86bf6bfaac879c8842af359f6102"
   license "MIT"
 
   depends_on "yarn" => :build
-  depends_on "node"
+  depends_on "node@20"
 
   def install
     system "yarn", "install", "--frozen-lockfile"
@@ -24,7 +24,7 @@ class Overseerr < Formula
       fi
       export CONFIG_DIRECTORY="#{var}/lib/overseerr/config"
       export PORT="5055"
-      exec "#{Formula["node"].opt_bin}/node" "#{libexec}/dist/index.js" "$@"
+      exec "#{Formula["node@20"].opt_bin}/node" "#{libexec}/dist/index.js" "$@"
     EOS
     chmod 0755, bin/"overseerr"
   end
