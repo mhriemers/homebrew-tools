@@ -4,6 +4,14 @@ name: Update packages
 # `auto_updates true` (sonarr, radarr) this just refreshes the install version;
 # for qbittorrent/tautulli (no self-updater) and the overseerr formula this IS
 # the update mechanism.
+#
+# Mechanism: `brew livecheck --newer-only` finds a newer version, then
+# `brew bump-*-pr --write-only` edits the .rb in place (no fork, no PR); we
+# commit & push the bumps to main ourselves with the default GITHUB_TOKEN.
+#
+# PREREQUISITE (cannot be set from YAML): the repo's
+#   Settings > Actions > General > Workflow permissions
+# must be "Read and write permissions", otherwise the final `git push` 403s.
 
 on:
   schedule:
@@ -17,64 +25,95 @@ concurrency:
   group: update-packages
   cancel-in-progress: false
 
+env:
+  HOMEBREW_NO_INSTALL_FROM_API: "1"    # resolve casks/formulae from the on-disk tap, not the JSON API
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"   # transitional bypass; the `brew trust` step below is the durable fix
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_ANALYTICS: "1"
+  TAP: mhriemers/tools
+
 jobs:
   bump:
     runs-on: macos-latest
     steps:
-      - name: Checkout tap
-        uses: actions/checkout@v4
-
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@master
 
-      - name: Tap this repository
-        run: brew tap mhriemers/tools "$GITHUB_WORKSPACE"
+      # actions/checkout requires a path *relative* to $GITHUB_WORKSPACE, so we
+      # check out here and relocate into Library/Taps in the next step.
+      #   token:       wires push credentials into this clone's .git
+      #   fetch-depth: 0 avoids shallow-clone errors during bump operations
+      - name: Check out tap
+        uses: actions/checkout@v4
+        with:
+          path: tap
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Move the real checkout (correct GitHub remote + push token) to the
+      # canonical tap path so brew sees the natively-installed tap
+      # "mhriemers/tools" with a matching remote. This replaces the old
+      # `brew tap mhriemers/tools "$GITHUB_WORKSPACE"` step, which failed with
+      # "Tap remote mismatch" (it interpreted the local path as the remote).
+      - name: Install checkout as tap
+        id: tap
+        run: |
+          set -euo pipefail
+          dest="$(brew --repository)/Library/Taps/mhriemers/homebrew-tools"
+          mkdir -p "$(dirname "$dest")"
+          rm -rf "$dest"
+          mv "$GITHUB_WORKSPACE/tap" "$dest"
+          echo "path=$dest" >> "$GITHUB_OUTPUT"
+
+      - name: Trust tap
+        run: brew trust "$TAP" || true   # durable trust; || true tolerates older brew without the subcommand
+
+      - name: Sanity check tap is recognized
+        run: brew tap-info "$TAP"
 
       - name: Bump outdated casks & formulae
+        working-directory: ${{ steps.tap.outputs.path }}
         env:
+          # Raises livecheck's GitHub API rate limit AND authenticates the
+          # artifact downloads bump-*-pr performs to recompute sha256.
           HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
           set -uo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # livecheck prints "<token>: <current> ==> <latest>" when a newer
-          # version exists, nothing when already up to date.
-          extract_new() { printf '%s\n' "$1" | sed -n 's/.*==>[[:space:]]*//p' | awk '{print $1}'; }
+          # With --newer-only the JSON array is non-empty only when a newer
+          # version exists; .latest is then the version to bump to.
+          latest_newer() { brew livecheck "$1" --newer-only --json "$2" 2>/dev/null | jq -r '.[0].version.latest // empty'; }
 
           for cask in qbittorrent sonarr radarr tautulli; do
-            token="mhriemers/tools/${cask}"
-            echo "::group::livecheck cask ${cask}"
-            line="$(brew livecheck --cask --newer-only --quiet "${token}" || true)"
-            echo "${line:-(up to date)}"
-            echo "::endgroup::"
-            new="$(extract_new "${line}")"
-            if [ -n "${new}" ]; then
-              echo "Bumping cask ${cask} -> ${new}"
-              # --write-only edits the local file (version + sha256) without opening a PR.
-              brew bump-cask-pr --write-only --no-audit --version="${new}" "${token}" || \
-                echo "::warning::bump failed for cask ${cask} ${new}"
+            token="${TAP}/${cask}"
+            new="$(latest_newer --cask "$token")"
+            echo "cask ${cask} -> ${new:-(up to date)}"
+            if [ -n "$new" ]; then
+              brew bump-cask-pr --write-only --no-audit --version="$new" "$token" \
+                || echo "::warning::bump failed for cask ${cask} ${new}"
             fi
           done
 
           for formula in overseerr; do
-            token="mhriemers/tools/${formula}"
-            echo "::group::livecheck formula ${formula}"
-            line="$(brew livecheck --formula --newer-only --quiet "${token}" || true)"
-            echo "${line:-(up to date)}"
-            echo "::endgroup::"
-            new="$(extract_new "${line}")"
-            if [ -n "${new}" ]; then
-              echo "Bumping formula ${formula} -> ${new}"
-              brew bump-formula-pr --write-only --no-audit --version="${new}" "${token}" || \
-                echo "::warning::bump failed for formula ${formula} ${new}"
+            token="${TAP}/${formula}"
+            new="$(latest_newer --formula "$token")"
+            echo "formula ${formula} -> ${new:-(up to date)}"
+            if [ -n "$new" ]; then
+              brew bump-formula-pr --write-only --no-audit --version="$new" "$token" \
+                || echo "::warning::bump failed for formula ${formula} ${new}"
             fi
           done
 
-          if ! git diff --quiet; then
-            git commit -am "packages: automated version bump"
-            git push
+      - name: Commit & push bumps to main
+        working-directory: ${{ steps.tap.outputs.path }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            git add Casks Formula
+            git commit -m "packages: automated version bump"
+            git push origin HEAD:main
           else
             echo "No changes to commit."
           fi
