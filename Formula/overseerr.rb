@@ -6,6 +6,11 @@ class Overseerr < Formula
   sha256 "c5af2fcd1e7da842b8f0d97f7dbfc2d9461c86bf6bfaac879c8842af359f6102"
   license "MIT"
 
+  livecheck do
+    url :stable
+    strategy :github_latest
+  end
+
   depends_on "yarn" => :build
   depends_on "node@20"
 

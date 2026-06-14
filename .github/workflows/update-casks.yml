@@ -1,0 +1,80 @@
+name: Update packages
+
+# Keeps the casks and formulae in this tap current. For casks marked
+# `auto_updates true` (sonarr, radarr) this just refreshes the install version;
+# for qbittorrent/tautulli (no self-updater) and the overseerr formula this IS
+# the update mechanism.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # daily, 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-packages
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout tap
+        uses: actions/checkout@v4
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Tap this repository
+        run: brew tap mhriemers/tools "$GITHUB_WORKSPACE"
+
+      - name: Bump outdated casks & formulae
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -uo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # livecheck prints "<token>: <current> ==> <latest>" when a newer
+          # version exists, nothing when already up to date.
+          extract_new() { printf '%s\n' "$1" | sed -n 's/.*==>[[:space:]]*//p' | awk '{print $1}'; }
+
+          for cask in qbittorrent sonarr radarr tautulli; do
+            token="mhriemers/tools/${cask}"
+            echo "::group::livecheck cask ${cask}"
+            line="$(brew livecheck --cask --newer-only --quiet "${token}" || true)"
+            echo "${line:-(up to date)}"
+            echo "::endgroup::"
+            new="$(extract_new "${line}")"
+            if [ -n "${new}" ]; then
+              echo "Bumping cask ${cask} -> ${new}"
+              # --write-only edits the local file (version + sha256) without opening a PR.
+              brew bump-cask-pr --write-only --no-audit --version="${new}" "${token}" || \
+                echo "::warning::bump failed for cask ${cask} ${new}"
+            fi
+          done
+
+          for formula in overseerr; do
+            token="mhriemers/tools/${formula}"
+            echo "::group::livecheck formula ${formula}"
+            line="$(brew livecheck --formula --newer-only --quiet "${token}" || true)"
+            echo "${line:-(up to date)}"
+            echo "::endgroup::"
+            new="$(extract_new "${line}")"
+            if [ -n "${new}" ]; then
+              echo "Bumping formula ${formula} -> ${new}"
+              brew bump-formula-pr --write-only --no-audit --version="${new}" "${token}" || \
+                echo "::warning::bump failed for formula ${formula} ${new}"
+            fi
+          done
+
+          if ! git diff --quiet; then
+            git commit -am "packages: automated version bump"
+            git push
+          else
+            echo "No changes to commit."
+          fi
